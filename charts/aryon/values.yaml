@@ -96,6 +96,15 @@ grafana:
     dashboards:
       enabled: true
       label: grafana_dashboard
+  datasources:
+    datasources.yaml:
+      apiVersion: 1
+      datasources:
+        - name: Prometheus
+          type: prometheus
+          url: http://aryon-prometheus-server:80
+          access: proxy
+          isDefault: true
 traefik:
   ingressClass:
     enabled: true
