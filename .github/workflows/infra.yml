@@ -143,6 +143,13 @@ jobs:
           access_key = "${{ secrets.AWS_ACCESS_KEY_ID }}"
           secret_key = "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
           EOF
+        
+      - name: Initialize and Validate Terraform Configuration
+        working-directory: terraform/env/prod
+        run: |
+          terraform init -backend-config="${{ github.event.inputs.environment }}-backend.conf" -upgrade
+          terraform validate
+          terraform fmt
 
       - name: Execute Terraform Plan
         working-directory: terraform/env/prod
