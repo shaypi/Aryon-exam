@@ -68,7 +68,11 @@ data "aws_eks_cluster_auth" "cluster" {
 provider "kubernetes" {
   host                   = module.eks.cluster_endpoint
   cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
-  token                  = data.aws_eks_cluster_auth.cluster.token
+  exec {
+    api_version = "client.authentication.k8s.io/v1beta1"
+    args        = ["-ExecutionPolicy", "Bypass", "-File", "${path.module}/get_token.ps1", module.eks.cluster_name, var.region]
+    command     = "powershell"
+  }
 }
 
 resource "kubernetes_storage_class_v1" "gp3" {
