@@ -13,11 +13,11 @@ private_subnet_cidr = ["10.0.17.0/25", "10.0.17.128/25", "10.0.18.0/25"]
 enable_nat_gateway  = true
 public_eks_tag      = { "kubernetes.io/role/elb" = 1 }
 private_eks_tag     = { "kubernetes.io/role/internal-elb" = 1 }
-eks_cluster_name    = "Aryon"
+eks_cluster_name    = "aryon"
 
 
 #EKS
-cluster_name                    = "Aryon"
+cluster_name                    = "aryon"
 k8s_version                     = "1.34"
 aws_iam                         = "eks-cluster-cap"
 desired_capacity                = 1
