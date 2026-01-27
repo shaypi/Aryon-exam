@@ -61,13 +61,17 @@ module "eks" {
   subnet_id               = module.vpc.private_subnets
 }
 
+data "aws_eks_cluster" "target" {
+  name = module.eks.cluster_name
+}
+
 data "aws_eks_cluster_auth" "cluster" {
   name = module.eks.cluster_name
 }
 
 provider "kubernetes" {
-  host                   = module.eks.cluster_endpoint
-  cluster_ca_certificate = base64decode(module.eks.cluster_certificate_authority_data)
+  host                   = data.aws_eks_cluster.target.endpoint
+  cluster_ca_certificate = base64decode(data.aws_eks_cluster.target.certificate_authority[0].data)
   token                  = data.aws_eks_cluster_auth.cluster.token
 }
 
