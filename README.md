@@ -19,7 +19,7 @@ Your task is to:
 ## Architecture
 
 ```mermaid
-graph TD
+graph LR
     User([User]) -->|HTTP Request| ELB[AWS ELB]
     ELB -->|Path: / | Items[Items Service]
     
