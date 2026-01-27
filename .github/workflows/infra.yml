@@ -143,26 +143,6 @@ jobs:
           access_key = "${{ secrets.AWS_ACCESS_KEY_ID }}"
           secret_key = "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
           EOF
-        
-      - name: Initialize and Validate Terraform Configuration
-        working-directory: terraform/env/prod
-        run: |
-          terraform init -backend-config="${{ github.event.inputs.environment }}-backend.conf" -upgrade
-          terraform validate
-          terraform fmt
-          
-          terraform apply -refresh-only -auto-approve \
-          -var-file="aryon.tfvars" \
-          -var="account_id=${{ github.event.inputs.account }}" \
-          -var="prefix=${{ github.event.inputs.environment }}" \
-          -var="project=${{ github.event.inputs.environment }}" \
-          -var="application=${{ github.event.inputs.environment }}" \
-          -var="eks_cluster_name=${{ github.event.inputs.environment }}" \
-          -var="k8s_version=${{ github.event.inputs.k8s_version }}" \
-          -var="cluster_name=${{ github.event.inputs.environment }}" \
-          -var="aws_iam=${{ github.event.inputs.environment }}" \
-          -var="region=${{ github.event.inputs.region }}"
-        
 
       - name: Execute Terraform Plan
         working-directory: terraform/env/prod
