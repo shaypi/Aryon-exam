@@ -1,0 +1,95 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+/env/
+/venv/
+/ENV/
+/build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual environments
+# .venv
+# venv/
+# ENV/
+# env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Kubernetes
+*.kubeconfig
+kubeconfig
+
+# Docker
+.dockerignore
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Logs
+*.log
+logs/
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets (DO NOT COMMIT)
+secrets/
+*.key
+*.pem
+*.crt
+
+# Candidate's solution
+SOLUTION.md
+
+# Terraform
+*.tfstate
+*.tfstate.*
+.terraform/
+*.tfvars
+
+# Allow Terraform environments
+!terraform/env/
+!terraform/env/**/*.tfvars
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Helm
+charts/*.tgz
+**/charts/*.tgz
+!charts/aryon/templates/
+!charts/aryon/Chart.yaml
+!charts/aryon/values.yaml
