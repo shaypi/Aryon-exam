@@ -407,7 +407,7 @@
           "type": "prometheus",
           "uid": "Prometheus"
         },
-        "definition": "label_values(items_created_total, app)",
+        "definition": "label_values({namespace=\"aryon\"}, app)",
         "hide": 0,
         "includeAll": true,
         "label": "Application",
@@ -415,7 +415,7 @@
         "name": "app",
         "options": [],
         "query": {
-          "query": "label_values(items_created_total, app)",
+          "query": "label_values({namespace=\"aryon\"}, app)",
           "refId": "StandardVariableQuery"
         },
         "refresh": 1,
