@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aryon.fullname" . }}-audit-service
+  labels:
+    app: audit-service
+spec:
+  replicas: {{ .Values.auditService.replicaCount }}
+  selector:
+    matchLabels:
+      app: audit-service
+  template:
+    metadata:
+      labels:
+        app: audit-service
+      {{- with .Values.auditService.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      containers:
+        - name: audit-service
+          image: "{{ .Values.auditService.image.repository }}:{{ .Values.auditService.image.tag }}"
+          imagePullPolicy: {{ .Values.auditService.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8081
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.auditService.resources | nindent 12 }}
+          env:
+            - name: DB_HOST
+              value: {{ .Values.auditService.env.DB_HOST | quote }}
+            - name: DB_PORT
+              value: {{ .Values.auditService.env.DB_PORT | quote }}
+            - name: DB_NAME
+              value: {{ .Values.auditService.env.DB_NAME | quote }}
+            - name: DB_USER
+              value: {{ .Values.auditService.env.DB_USER | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aryon.fullname" . }}-postgresql
+                  key: postgres-password
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aryon.fullname" . }}-audit-service
+spec:
+  type: {{ .Values.auditService.service.type }}
+  ports:
+    - port: {{ .Values.auditService.service.port }}
+      targetPort: {{ .Values.auditService.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    app: audit-service

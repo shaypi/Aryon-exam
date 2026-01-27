@@ -1,0 +1,20 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: aryon
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: https://github.com/shaypi/Aryon-exam
+    targetRevision: feat/shay
+    path: charts/aryon
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: aryon
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+    syncOptions:
+      - CreateNamespace=true

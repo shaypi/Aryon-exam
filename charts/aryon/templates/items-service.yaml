@@ -1,0 +1,68 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "aryon.fullname" . }}-items-service
+  labels:
+    app: items-service
+spec:
+  replicas: {{ .Values.itemsService.replicaCount }}
+  selector:
+    matchLabels:
+      app: items-service
+  template:
+    metadata:
+      labels:
+        app: items-service
+      {{- with .Values.itemsService.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      containers:
+        - name: items-service
+          image: "{{ .Values.itemsService.image.repository }}:{{ .Values.itemsService.image.tag }}"
+          imagePullPolicy: {{ .Values.itemsService.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+          resources:
+            {{- toYaml .Values.itemsService.resources | nindent 12 }}
+          env:
+            - name: DB_HOST
+              value: {{ .Values.itemsService.env.DB_HOST | quote }}
+            - name: DB_PORT
+              value: {{ .Values.itemsService.env.DB_PORT | quote }}
+            - name: DB_NAME
+              value: {{ .Values.itemsService.env.DB_NAME | quote }}
+            - name: DB_USER
+              value: {{ .Values.itemsService.env.DB_USER | quote }}
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "aryon.fullname" . }}-postgresql
+                  key: postgres-password
+            - name: AUDIT_SERVICE_URL
+              value: {{ .Values.itemsService.env.AUDIT_SERVICE_URL | quote }}
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aryon.fullname" . }}-items-service
+spec:
+  type: {{ .Values.itemsService.service.type }}
+  ports:
+    - port: {{ .Values.itemsService.service.port }}
+      targetPort: {{ .Values.itemsService.service.targetPort }}
+      protocol: TCP
+      name: http
+  selector:
+    app: items-service

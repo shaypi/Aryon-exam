@@ -1,0 +1,194 @@
+name: CD - Build and Deploy
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'src/**'
+      - 'charts/**'
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  bump-version:
+    name: Determine and Bump Version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    outputs:
+      new_tag: ${{ steps.export_version.outputs.new_tag }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: tag_action
+        if: github.event_name != 'pull_request'
+        uses: mathieudutour/github-tag-action@v6.2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          default_bump: minor
+
+      - name: Export Version
+        id: export_version
+        run: |
+          if [ "${{ github.event_name }}" == "pull_request" ]; then
+            echo "new_tag=pr-${{ github.event.number }}" >> $GITHUB_OUTPUT
+          else
+            echo "new_tag=${{ steps.tag_action.outputs.new_tag }}" >> $GITHUB_OUTPUT
+          fi
+
+  build-and-push:
+    name: Build and Push Images
+    runs-on: ubuntu-latest
+    needs: bump-version
+    permissions:
+      contents: read
+      packages: write
+
+    strategy:
+      matrix:
+        service: [items-service, audit-service]
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push service images
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/${{ matrix.service }}
+          push: true
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/aryon/${{ matrix.service }}:${{ needs.bump-version.outputs.new_tag }}
+            ${{ github.event_name != 'pull_request' && format('ghcr.io/{0}/aryon/{1}:latest', github.repository_owner, matrix.service) || '' }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  package-chart:
+    name: Package and Push Helm Chart
+    runs-on: ubuntu-latest
+    needs: [bump-version, build-and-push]
+    if: github.event_name != 'pull_request'
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Add Helm Repositories and Build Dependencies
+        env:
+          HELM_EXPERIMENTAL_OCI: 1
+        run: |
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add grafana https://grafana.github.io/helm-charts
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+          
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin
+          if git rev-parse --verify origin/feat/shay >/dev/null 2>&1; then
+            echo "Branch feat/shay exists, checking it out..."
+            git checkout -b feat/shay origin/feat/shay
+            git merge ${{ github.sha }} -m "Merge main"
+          else
+            echo "Branch feat/shay does not exist, creating it..."
+            git checkout -b feat/shay
+          fi
+          
+          helm dependency build ./charts/aryon
+          
+          VERSION=${{ needs.bump-version.outputs.new_tag }}
+          
+          sed -i "s/^version: .*/version: $VERSION/" ./charts/aryon/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"$VERSION\"/" ./charts/aryon/Chart.yaml
+          
+          sed -i "s/tag: latest/tag: $VERSION/g" ./charts/aryon/values.yaml
+          
+          helm package ./charts/aryon
+          
+          helm push aryon-$VERSION.tgz oci://ghcr.io/${{ github.repository_owner }}/aryon/charts
+          
+          git add ./charts/aryon/Chart.yaml ./charts/aryon/values.yaml ./charts/aryon/Chart.lock
+          git commit -m "chore: update chart version to $VERSION [skip ci]"
+          git push origin feat/shay
+
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: [bump-version, package-chart]
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: eu-north-1
+
+      - name: Connect to EKS
+        run: aws eks update-kubeconfig --region eu-north-1 --name aryon
+
+      - name: Install Traefik CRDs
+        shell: /usr/bin/bash -e {0}
+        env:
+          AWS_DEFAULT_REGION: eu-north-1
+          AWS_REGION: eu-north-1
+          AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        run: |
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+          helm pull traefik/traefik --version 39.0.0 --untar
+          kubectl apply -f traefik/crds/ --validate=false
+
+      - name: Upgrade Helm Release
+        env:
+          HELM_EXPERIMENTAL_OCI: 1
+        run: |
+          helm upgrade --install aryon oci://ghcr.io/${{ github.repository_owner }}/aryon/charts/aryon \
+            --version ${{ needs.bump-version.outputs.new_tag }} \
+            --namespace aryon \
+            --set itemsService.image.tag=${{ needs.bump-version.outputs.new_tag }} \
+            --set auditService.image.tag=${{ needs.bump-version.outputs.new_tag }} \
+            --set postgresql.auth.password=${{ secrets.DB_PASSWORD }}

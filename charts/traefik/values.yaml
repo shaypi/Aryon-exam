@@ -1,0 +1,44 @@
+deployment:
+  replicas: 2
+
+ingressClass:
+  enabled: true
+  isDefaultClass: true
+
+ingressRoute:
+  dashboard:
+    enabled: true
+
+dashboard:
+  enabled: true
+
+accessLogs:
+  enabled: true
+  format: json
+
+service:
+  type: LoadBalancer
+
+additionalArguments:
+  - "--api.insecure=false"
+  - "--providers.kubernetesingress.ingressclass=traefik"
+  - "--log.level=INFO"
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+readinessProbe:
+  failureThreshold: 3
+  initialDelaySeconds: 10
+  periodSeconds: 10
+  successThreshold: 1
+  timeoutSeconds: 2
+
+metrics:
+  prometheus:
+    enabled: true

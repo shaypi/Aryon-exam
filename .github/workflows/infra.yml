@@ -1,0 +1,265 @@
+name: Provision AWS Infrastructure
+
+on:    
+  workflow_dispatch:
+    inputs:
+      condition:
+        type: choice
+        description: 'Choose Operation: Apply or Destroy EKS Infrastructure: '
+        options:
+          - apply
+          - destroy
+        required: true
+        default: 'apply'
+
+      environment:
+        type: choice
+        description: 'Enter the desired environment name: '
+        required: true
+        options:
+          - 'aryon'
+        default: 'aryon'
+      
+      account:
+        type: string
+        description: 'Type the desired AWS account:.'
+        required: true
+        default: ''
+
+      region:
+        type: choice
+        description: 'Choose the desired regions deployment.'
+        options:
+          - 'us-east-1'
+          - 'us-east-2'
+          - 'us-west-1'
+          - 'us-west-2'
+          - 'ap-south-1'
+          - 'ap-northeast-3'
+          - 'ap-northeast-2'
+          - 'ap-southeast-1'
+          - 'ap-southeast-2'
+          - 'ap-northeast-1'
+          - 'ca-central-1'
+          - 'eu-central-1'
+          - 'eu-west-1'
+          - 'eu-west-2'
+          - 'eu-west-3'
+          - 'eu-north-1'
+          - 'sa-east-1'
+        required: true
+        default: 'eu-north-1'
+
+      k8s_version:
+        type: choice
+        description: 'Choose Operation: Choose the desired k8s version.'
+        options:
+          - '1.32'
+          - '1.33'
+          - '1.34'
+        required: true
+        default: '1.34'
+
+jobs:
+  terraform:
+    name: 'Terraform'
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Print Workflow Dispatch Inputs
+        run: |
+          echo "Workflow Dispatch Inputs:"
+          echo "  Condition: ${{ github.event.inputs.condition }}"
+          echo "  Environment: ${{ github.event.inputs.environment }}"
+          echo "  Account: ${{ github.event.inputs.account }}"
+          echo "  Region: ${{ github.event.inputs.region }}"
+          echo "  K8s Version: ${{ github.event.inputs.k8s_version }}"
+      
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+      
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.region }}
+
+      - name: Ensure S3 State Bucket Exists
+        run: |
+          BUCKET="${{ github.event.inputs.environment }}-exam"
+          REGION="${{ github.event.inputs.region }}"
+          
+          # Check if bucket exists
+          if aws s3api head-bucket --bucket "$BUCKET" 2>/dev/null; then
+            echo "Bucket $BUCKET exists."
+          else
+            echo "Bucket $BUCKET does not exist or permission denied. Attempting to create in $REGION..."
+            aws s3 mb "s3://$BUCKET" --region "$REGION"
+          fi
+          
+          aws s3api put-bucket-versioning --bucket "$BUCKET" --versioning-configuration Status=Enabled
+          aws s3api put-bucket-encryption --bucket "$BUCKET" --server-side-encryption-configuration '{"Rules":[{"ApplyServerSideEncryptionByDefault":{"SSEAlgorithm":"AES256"}}]}'
+          
+      - name: Ensure DynamoDB State Lock Table Exists
+        run: |
+          BUCKET="${{ github.event.inputs.environment }}-exam"
+          TABLE_NAME="terraform-state-lock"
+          
+          # Get bucket region to ensure DynamoDB table is in the same region as the state bucket
+          BUCKET_REGION=$(aws s3api get-bucket-location --bucket "$BUCKET" --output text)
+          if [ "$BUCKET_REGION" == "None" ]; then
+            BUCKET_REGION="us-east-1"
+          fi
+          
+          echo "Bucket is in region: $BUCKET_REGION. Creating DynamoDB lock table in the same region."
+
+          aws dynamodb describe-table --table-name "$TABLE_NAME" --region "$BUCKET_REGION" > /dev/null 2>&1 || \
+          aws dynamodb create-table \
+            --table-name "$TABLE_NAME" \
+            --attribute-definitions AttributeName=LockID,AttributeType=S \
+            --key-schema AttributeName=LockID,KeyType=HASH \
+            --billing-mode PAY_PER_REQUEST \
+            --region "$BUCKET_REGION"
+
+      - name: Configure backend
+        working-directory: terraform/env/prod
+        run: |
+          # Get bucket region
+          BUCKET_REGION=$(aws s3api get-bucket-location --bucket ${{ github.event.inputs.environment }}-exam --output text)
+          if [ "$BUCKET_REGION" == "None" ]; then
+            BUCKET_REGION="us-east-1"
+          fi
+          
+          cat <<EOF > ${{ github.event.inputs.environment }}-backend.conf
+          encrypt = true
+          bucket = "${{ github.event.inputs.environment }}-exam"
+          dynamodb_table = "terraform-state-lock"
+          key = "env/${{ github.event.inputs.environment }}/terraform.tfstate"
+          region = "$BUCKET_REGION"
+          access_key = "${{ secrets.AWS_ACCESS_KEY_ID }}"
+          secret_key = "${{ secrets.AWS_SECRET_ACCESS_KEY }}"
+          EOF
+        
+      - name: Initialize and Validate Terraform Configuration
+        working-directory: terraform/env/prod
+        run: |
+          terraform init -backend-config="${{ github.event.inputs.environment }}-backend.conf" -upgrade
+          terraform validate
+          terraform fmt
+          
+          terraform apply -refresh-only -auto-approve \
+          -var-file="aryon.tfvars" \
+          -var="account_id=${{ github.event.inputs.account }}" \
+          -var="prefix=${{ github.event.inputs.environment }}" \
+          -var="project=${{ github.event.inputs.environment }}" \
+          -var="application=${{ github.event.inputs.environment }}" \
+          -var="eks_cluster_name=${{ github.event.inputs.environment }}" \
+          -var="k8s_version=${{ github.event.inputs.k8s_version }}" \
+          -var="cluster_name=${{ github.event.inputs.environment }}" \
+          -var="aws_iam=${{ github.event.inputs.environment }}" \
+          -var="region=${{ github.event.inputs.region }}"
+        
+
+      - name: Execute Terraform Plan
+        working-directory: terraform/env/prod
+        run: |
+          terraform plan \
+          -var-file="aryon.tfvars" \
+          -var="account_id=${{ github.event.inputs.account }}" \
+          -var="prefix=${{ github.event.inputs.environment }}" \
+          -var="project=${{ github.event.inputs.environment }}" \
+          -var="application=${{ github.event.inputs.environment }}" \
+          -var="eks_cluster_name=${{ github.event.inputs.environment }}" \
+          -var="k8s_version=${{ github.event.inputs.k8s_version }}" \
+          -var="cluster_name=${{ github.event.inputs.environment }}" \
+          -var="aws_iam=${{ github.event.inputs.environment }}" \
+          -var="region=${{ github.event.inputs.region }}"
+          
+      - name: Apply or Destroy Terraform Infrastructure
+        working-directory: terraform/env/prod
+        run: |
+          terraform ${{ github.event.inputs.condition }} \
+          -var-file="aryon.tfvars" \
+          -var="account_id=${{ github.event.inputs.account }}" \
+          -var="prefix=${{ github.event.inputs.environment }}" \
+          -var="project=${{ github.event.inputs.environment }}" \
+          -var="application=${{ github.event.inputs.environment }}" \
+          -var="eks_cluster_name=${{ github.event.inputs.environment }}" \
+          -var="k8s_version=${{ github.event.inputs.k8s_version }}" \
+          -var="cluster_name=${{ github.event.inputs.environment }}" \
+          -var="aws_iam=${{ github.event.inputs.environment }}" \
+          -var="region=${{ github.event.inputs.region }}" \
+          -auto-approve
+
+  deploy-application:
+    name: 'Deploy ArgoCD and Application'
+    runs-on: ubuntu-latest
+    if: github.event.inputs.condition == 'apply'
+    needs: terraform
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        
+      - name: Setup kubectl
+        uses: azure/setup-kubectl@v3
+        
+      - name: Setup Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: 'latest'
+          
+      - name: Configure AWS CLI Credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ github.event.inputs.region }}
+          
+      - name: Connect to AWS EKS Cluster
+        run: |
+          aws eks --region ${{ github.event.inputs.region }} update-kubeconfig --name ${{ github.event.inputs.environment }}
+          kubectl cluster-info
+      
+      - name: Install ArgoCD (if not exists)
+        run: |
+          if ! kubectl get deployment argocd-server -n argocd &>/dev/null; then
+            echo "Installing ArgoCD..."
+            kubectl create ns argocd --dry-run=client -o yaml | kubectl apply -f -
+            helm repo add argo https://argoproj.github.io/argo-helm
+            helm repo update
+            helm upgrade -i argocd argo/argo-cd --namespace argocd
+          else
+            echo "ArgoCD is already installed"
+          fi
+          
+      - name: Wait for ArgoCD to be ready
+        run: kubectl wait --for=condition=available --timeout=300s deployment/argocd-server -n argocd
+
+      - name: Build Helm Dependencies
+        env:
+          HELM_EXPERIMENTAL_OCI: 1
+        run: |
+          # Install Traefik CRDs (Helm doesn't automatically install them for sub-charts)
+          helm repo add traefik https://traefik.github.io/charts
+          helm repo update
+          helm pull traefik/traefik --version 39.0.0 --untar
+          kubectl apply -f traefik/crds/
+          
+          helm dependency build ./charts/aryon
+
+      - name: Create Namespace
+        run: kubectl create namespace aryon --dry-run=client -o yaml | kubectl apply -f -
+
+      - name: Upgrade Helm Release
+        run: |
+          helm upgrade --install aryon ./charts/aryon \
+            --namespace aryon \
+            --create-namespace \
+            --set itemsService.image.tag=${{ github.sha }} \
+            --set auditService.image.tag=${{ github.sha }} \
+            --set postgresql.auth.password=${{ secrets.DB_PASSWORD }}

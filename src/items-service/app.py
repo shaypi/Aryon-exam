@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
 import psycopg2
 import psycopg2.extras
 import os
@@ -6,18 +6,39 @@ from datetime import datetime, timezone
 import uuid
 import requests
 import logging
+import json
+import sys
+from prometheus_client import Counter, Summary, generate_latest, CONTENT_TYPE_LATEST
 
 # Configure logging
-logging.basicConfig(level=logging.INFO)
+class JsonFormatter(logging.Formatter):
+    def format(self, record):
+        log_record = {
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+            "level": record.levelname,
+            "message": record.getMessage(),
+            "logger": record.name
+        }
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+        return json.dumps(log_record)
+
+handler = logging.StreamHandler(sys.stdout)
+handler.setFormatter(JsonFormatter())
+logging.getLogger().addHandler(handler)
+logging.getLogger().setLevel(logging.INFO)
 logger = logging.getLogger(__name__)
 
 app = Flask(__name__)
 
-# Audit service configuration
+ITEMS_CREATED = Counter('items_created_total', 'Total items created')
+ITEMS_RETRIEVED = Counter('items_retrieved_total', 'Total items retrieved')
+REQUEST_LATENCY = Summary('request_latency_seconds', 'Request latency in seconds')
+DB_QUERY_TIME = Summary('db_query_duration_seconds', 'Database query duration in seconds')
+
 AUDIT_SERVICE_URL = os.environ.get('AUDIT_SERVICE_URL', 'http://audit-service:8081')
 
 def get_db_connection():
-    """Create a connection to the PostgreSQL database."""
     try:
         conn = psycopg2.connect(
             host=os.environ.get('DB_HOST', 'localhost'),
@@ -32,7 +53,6 @@ def get_db_connection():
         raise
 
 def log_audit(action, details):
-    """Send audit log to the audit service. Non-blocking - failures won't stop the request."""
     try:
         response = requests.post(
             f'{AUDIT_SERVICE_URL}/audit/log',
@@ -54,47 +74,50 @@ def log_audit(action, details):
 
 @app.route('/', methods=['GET'])
 def root():
-    """Welcome endpoint."""
     return jsonify({
         'service': 'Items Service',
         'version': '1.0.0',
         'endpoints': {
             'create': 'POST /items',
             'list': 'GET /items',
-            'health': 'GET /health'
+            'health': 'GET /health',
+            'metrics': 'GET /metrics'
         }
     })
 
+@app.route('/metrics')
+def metrics():
+    return Response(generate_latest(), mimetype=CONTENT_TYPE_LATEST)
+
 @app.route('/items', methods=['POST'])
+@REQUEST_LATENCY.time()
 def create_item():
-    """Create a new item."""
     try:
         data = request.get_json()
         
-        # Validate input
         if not data or 'name' not in data:
             return jsonify({'error': 'Name is required'}), 400
         
-        # Generate item data
         item_id = str(uuid.uuid4())
         name = data.get('name')
         description = data.get('description', '')
         created_at = datetime.now(timezone.utc)
         
-        # Save to database
-        conn = get_db_connection()
-        cur = conn.cursor()
+        with DB_QUERY_TIME.time():
+            conn = get_db_connection()
+            cur = conn.cursor()
+            
+            cur.execute(
+                'INSERT INTO items (id, name, description, created_at) VALUES (%s, %s, %s, %s)',
+                (item_id, name, description, created_at)
+            )
+            
+            conn.commit()
+            cur.close()
+            conn.close()
         
-        cur.execute(
-            'INSERT INTO items (id, name, description, created_at) VALUES (%s, %s, %s, %s)',
-            (item_id, name, description, created_at)
-        )
+        ITEMS_CREATED.inc()
         
-        conn.commit()
-        cur.close()
-        conn.close()
-        
-        # Log audit event (non-blocking)
         log_audit('CREATE_ITEM', {
             'item_id': item_id,
             'name': name
@@ -114,24 +137,25 @@ def create_item():
         return jsonify({'error': 'Internal server error'}), 500
 
 @app.route('/items', methods=['GET'])
+@REQUEST_LATENCY.time()
 def list_items():
-    """List all items."""
     try:
-        conn = get_db_connection()
-        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        with DB_QUERY_TIME.time():
+            conn = get_db_connection()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            
+            cur.execute('SELECT * FROM items ORDER BY created_at DESC')
+            items = cur.fetchall()
+            
+            cur.close()
+            conn.close()
         
-        cur.execute('SELECT * FROM items ORDER BY created_at DESC')
-        items = cur.fetchall()
+        ITEMS_RETRIEVED.inc(len(items))
         
-        cur.close()
-        conn.close()
-        
-        # Convert datetime and UUID to string for JSON serialization
         for item in items:
             item['id'] = str(item['id'])
             item['created_at'] = item['created_at'].isoformat()
         
-        # Log audit event (non-blocking)
         log_audit('LIST_ITEMS', {
             'count': len(items)
         })
@@ -146,9 +170,7 @@ def list_items():
 
 @app.route('/health', methods=['GET'])
 def health():
-    """Health check endpoint."""
     try:
-        # Check database connection
         conn = get_db_connection()
         cur = conn.cursor()
         cur.execute('SELECT 1')

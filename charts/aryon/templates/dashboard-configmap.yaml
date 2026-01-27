@@ -1,0 +1,9 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: aryon-grafana-dashboard
+  labels:
+    grafana_dashboard: "1"
+data:
+  aryon-dashboard.json: |
+{{ .Files.Get "dashboards/aryon-dashboard.json" | indent 4 }}

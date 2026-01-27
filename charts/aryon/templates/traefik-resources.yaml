@@ -1,0 +1,42 @@
+{{- if .Values.traefik.deployment.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "aryon.fullname" . }}-retry
+  namespace: {{ .Release.Namespace }}
+spec:
+  retry:
+    attempts: 3
+    initialInterval: 100ms
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "aryon.fullname" . }}-compress
+  namespace: {{ .Release.Namespace }}
+spec:
+  compress: {}
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "aryon.fullname" . }}-security
+  namespace: {{ .Release.Namespace }}
+spec:
+  headers:
+    browserXssFilter: true
+    contentTypeNosniff: true
+    forceSTSHeader: true
+    stsSeconds: 31536000
+    frameDeny: true
+---
+apiVersion: traefik.io/v1alpha1
+kind: Middleware
+metadata:
+  name: {{ include "aryon.fullname" . }}-ratelimit
+  namespace: {{ .Release.Namespace }}
+spec:
+  rateLimit:
+    average: 100
+    burst: 50
+{{- end }}

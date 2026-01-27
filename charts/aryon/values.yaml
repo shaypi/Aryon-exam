@@ -1,0 +1,108 @@
+postgresql:
+  enabled: true
+  auth:
+    database: itemsdb
+    username: postgres
+    password: password
+  primary:
+    initdb:
+      scriptsConfigMap: aryon-db-schema
+
+itemsService:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/shaypi/aryon/items-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 80
+    targetPort: 8080
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+    requests:
+      cpu: 100m
+      memory: 128Mi
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8080"
+    prometheus.io/path: "/metrics"
+  env:
+    DB_HOST: "aryon-postgresql"
+    DB_PORT: "5432"
+    DB_NAME: "itemsdb"
+    DB_USER: "postgres"
+    DB_PASSWORD: "password"
+    AUDIT_SERVICE_URL: "http://aryon-audit-service:8081"
+
+auditService:
+  enabled: true
+  replicaCount: 1
+  image:
+    repository: ghcr.io/shaypi/aryon/audit-service
+    tag: latest
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 8081
+    targetPort: 8081
+  resources:
+    limits:
+      cpu: 500m
+      memory: 256Mi
+      memory: 128Mi
+  podAnnotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "8081"
+    prometheus.io/path: "/metrics"
+  env:
+    DB_HOST: "aryon-postgresql"
+    DB_PORT: "5432"
+    DB_NAME: "itemsdb"
+    DB_USER: "postgres"
+    DB_PASSWORD: "password"
+
+ingress:
+  enabled: true
+  className: "traefik"
+  annotations:
+    traefik.ingress.kubernetes.io/router.middlewares: "{{ .Release.Namespace }}-{{ include \"aryon.fullname\" . }}-retry@kubernetescrd, {{ .Release.Namespace }}-{{ include \"aryon.fullname\" . }}-compress@kubernetescrd, {{ .Release.Namespace }}-{{ include \"aryon.fullname\" . }}-security@kubernetescrd, {{ .Release.Namespace }}-{{ include \"aryon.fullname\" . }}-ratelimit@kubernetescrd"
+  hosts:
+    - host: ""
+      paths:
+        - path: /
+          pathType: Prefix
+          serviceName: aryon-items-service
+          servicePort: 80
+
+monitoring:
+  enabled: true
+
+prometheus:
+  alertmanager:
+    enabled: false
+  server:
+    persistentVolume:
+      enabled: false
+
+grafana:
+  adminPassword: admin
+  persistence:
+    enabled: false
+  sidecar:
+    dashboards:
+      enabled: true
+      label: grafana_dashboard
+traefik:
+  ingressClass:
+    enabled: true
+    isDefaultClass: true
+    name: "traefik"
+  deployment:
+    enabled: true
+    kind: Deployment
+  service:
+    type: LoadBalancer
