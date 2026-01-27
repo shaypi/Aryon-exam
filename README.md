@@ -18,6 +18,32 @@ Your task is to:
 
 ## Architecture
 
+```mermaid
+graph TD
+    User([User]) -->|HTTP Request| ELB[AWS ELB]
+    ELB -->|Path: / | Items[Items Service]
+    
+    subgraph "Kubernetes Cluster"
+        Items -->|Internal DNS| Audit[Audit Service]
+        Items -->|psql| DB[(PostgreSQL)]
+        Audit -->|psql| DB
+        
+        subgraph "Monitoring Stack"
+            Prom[(Prometheus)] -.->|Scrape /metrics| Items
+            Prom -.->|Scrape /metrics| Audit
+            Grafana[Grafana] -->|PromQL| Prom
+        end
+    end
+    
+    User -.->|Port Forward: 3000| Grafana
+    
+    style Items fill:#f9f,stroke:#333,stroke-width:2px
+    style Audit fill:#bbf,stroke:#333,stroke-width:2px
+    style DB fill:#dfd,stroke:#333
+    style Prom fill:#ffd,stroke:#333
+    style Grafana fill:#fdd,stroke:#333
+```
+
 The Items Service should:
 - Be publicly accessible
 - Store items in a PostgreSQL database
