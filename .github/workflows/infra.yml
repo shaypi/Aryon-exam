@@ -233,6 +233,9 @@ jobs:
         run: |
           # Install Traefik CRDs (Helm doesn't automatically install them for sub-charts)
           helm repo add traefik https://traefik.github.io/charts
+          helm repo add bitnami https://charts.bitnami.com/bitnami
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo add grafana https://grafana.github.io/helm-charts
           helm repo update
           helm pull traefik/traefik --version 39.0.0 --untar
           kubectl apply -f traefik/crds/
