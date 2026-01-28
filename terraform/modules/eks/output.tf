@@ -1,6 +1,10 @@
 
 output "cluster_name" {
   value = aws_eks_cluster.main.name
+  depends_on = [
+    aws_eks_access_entry.terraform_caller,
+    aws_eks_access_policy_association.terraform_caller_admin
+  ]
 }
 
 output "ca" {
@@ -9,6 +13,10 @@ output "ca" {
 
 output "cluster_certificate_authority_data" {
   value = aws_eks_cluster.main.certificate_authority[0].data
+  depends_on = [
+    aws_eks_access_entry.terraform_caller,
+    aws_eks_access_policy_association.terraform_caller_admin
+  ]
 }
 
 output "endpoint" {
@@ -17,6 +25,10 @@ output "endpoint" {
 
 output "cluster_endpoint" {
   value = aws_eks_cluster.main.endpoint
+  depends_on = [
+    aws_eks_access_entry.terraform_caller,
+    aws_eks_access_policy_association.terraform_caller_admin
+  ]
 }
 
 output "eks_cluster_sg" {

@@ -90,6 +90,7 @@ resource "kubernetes_storage_class_v1" "gp3" {
     fsType = "ext4"
   }
   volume_binding_mode = "WaitForFirstConsumer"
+  depends_on          = [module.eks]
 }
 
 
